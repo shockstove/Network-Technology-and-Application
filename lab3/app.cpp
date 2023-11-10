@@ -1,23 +1,28 @@
 #define  _CRT_SECURE_NO_WARNINGS 1
 #include<pcap.h>
 #include<Winsock2.h>
+#include <windows.h>
 #include<iostream>
 #include<stdio.h>
 #include<stdlib.h>
+#include<iphlpapi.h>
+#include<string>
 #pragma comment(lib,"Packet.lib")
 #pragma comment(lib,"wpcap.lib")
-#pragma comment(lib,"ws2_32.lib")//表示链接的时侯找ws2_32.lib
+#pragma comment(lib,"ws2_32.lib")
+#pragma comment(lib,"iphlpapi.lib")//表示链接的时侯找ws2_32.lib
 //#pragma warning( disable : 4996 )//要使用旧函数
 using namespace std;
 
 /* 4 bytes IP address */
+
 typedef struct ip_address {
     u_char byte1;
     u_char byte2;
     u_char byte3;
     u_char byte4;
 }ip_address;
-
+#pragma pack(1)
 typedef struct ehter_header {
     u_char    ether_dhost[6];   //目的MAC地址
     u_char    ether_shost[6];   //源MAC地址
@@ -34,15 +39,10 @@ typedef struct ARP_frame {
     u_short opcode;
     u_char sender_mac[6];
     ip_address sender_ip;
-    u_char targer_mac[6];
+    u_char target_mac[6];
     ip_address target_ip;
 }ARP_frame;
-
-//报文处理函数
-void packet_handler(
-    u_char* param,
-    const struct pcap_pkthdr* header,
-    const u_char* pkt_data);
+#pragma pack(0)
 
 int main()
 {
@@ -53,6 +53,9 @@ int main()
     pcap_t* adhandle;
     char errbuf[PCAP_ERRBUF_SIZE];
     ARP_frame ARPframe;
+    ARP_frame* RecFrame;
+    struct pcap_pkthdr* pkt_header;
+	const u_char* pkt_data;
     //获取设备列表
     if (pcap_findalldevs_ex(PCAP_SRC_IF_STRING,
         NULL, &alldevs, errbuf) == -1)
@@ -104,9 +107,6 @@ int main()
     char filter[40] = "ether proto \\arp";
     u_int netmask;
     struct bpf_program fcode;
-    printf("输入要捕获的个数：");
-    int count = 1;
-    scanf("%d", &count);
     if (d->addresses != NULL)
         //获取掩码
         netmask = ((struct sockaddr_in*)(d->addresses->netmask))->sin_addr.S_un.S_addr;
@@ -130,88 +130,76 @@ int main()
         //pcap_freealldevs(alldevs);
         //pcap_loop(adhandle, count, packet_handler, NULL);
     }
-    ARPframe.header.ether_shost=(((struct sockaddr*)(d->address->addr)->sa_data))
+    PIP_ADAPTER_ADDRESSES pAddresses=nullptr;
+    IP_ADAPTER_DNS_SERVER_ADDRESS *pDnsServer=nullptr;
+    ULONG outbuflen=0;
+    GetAdaptersAddresses(AF_UNSPEC,0,NULL,pAddresses,&outbuflen);
+    pAddresses=(IP_ADAPTER_ADDRESSES*)malloc(outbuflen);
+    GetAdaptersAddresses(AF_INET,NULL,NULL,pAddresses,&outbuflen);
+    while(1)
+    {
+        bool find = 1;
+        for(int i=2;i<6;i++)
+        {
+            if(pAddresses->FirstUnicastAddress->Address.lpSockaddr->sa_data[i]!=d->addresses->addr->sa_data[i])
+            {
+                find = 0;
+                break;
+            }
+        }
+        if(find)break;
+        pAddresses = pAddresses->Next;
+    }
+    for(int i=0;i<6;i++)
+    {
+        ARPframe.header.ether_shost[i]=pAddresses->PhysicalAddress[i];
+        ARPframe.header.ether_dhost[i]=0xff;
+        ARPframe.sender_mac[i]=pAddresses->PhysicalAddress[i];
+        ARPframe.target_mac[i]=0x00;
+    }
+    ARPframe.sender_ip.byte1=d->addresses->addr->sa_data[2];
+    ARPframe.sender_ip.byte2=d->addresses->addr->sa_data[3];
+    ARPframe.sender_ip.byte3=d->addresses->addr->sa_data[4];
+    ARPframe.sender_ip.byte4=d->addresses->addr->sa_data[5];
+    ARPframe.target_ip.byte1=192;
+    ARPframe.target_ip.byte2=168;
+    ARPframe.target_ip.byte3=201;
+    ARPframe.target_ip.byte4=180;
+    ARPframe.header.ether_type=htons(0x0806);
+    ARPframe.hardware=htons(0x0001);
+    ARPframe.protocol=htons(0x0800);
+    ARPframe.hardware_size=6;
+    ARPframe.protocol_size=4;
+    ARPframe.opcode=htons(0x0001);
+    pcap_sendpacket(adhandle,(u_char*)&ARPframe,sizeof(ARPframe));
+    while(1)
+    {
+        switch(pcap_next_ex(adhandle,&pkt_header,&pkt_data))
+        {
+        case -1:
+            cout<<"捕获错误"<<endl;
+            return 0;
+        case 0:
+            cout<<"未捕获到数据报"<<endl;
+            break;
+        default:
+            //ether_header* ETH=(ether_header*)pkt_data;
+            RecFrame=(ARP_frame*)pkt_data;
+            if(RecFrame->target_ip.byte1==ARPframe.sender_ip.byte1
+            &&RecFrame->target_ip.byte2==ARPframe.sender_ip.byte2
+            &&RecFrame->target_ip.byte3==ARPframe.sender_ip.byte3
+            &&RecFrame->target_ip.byte4==ARPframe.sender_ip.byte4
+            &&RecFrame->sender_ip.byte1==ARPframe.target_ip.byte1
+            &&RecFrame->sender_ip.byte2==ARPframe.target_ip.byte2
+            &&RecFrame->sender_ip.byte3==ARPframe.target_ip.byte3
+            &&RecFrame->sender_ip.byte4==ARPframe.target_ip.byte4)
+            {
+                cout<<"对应关系如下:"<<endl;
+                printf("%d.%d.%d.%d\n",ARPframe.target_ip.byte1,ARPframe.target_ip.byte2,ARPframe.target_ip.byte3,ARPframe.target_ip.byte4);
+                printf("%02x:%02x:%02x:%02x:%02x:%02x\n",RecFrame->sender_mac[0],RecFrame->sender_mac[1],RecFrame->sender_mac[2],RecFrame->sender_mac[3],RecFrame->sender_mac[4],RecFrame->sender_mac[5]);
+                break;
+            }
+        }
+    }
     return 0;
-}
-
-
-void  packet_handler(u_char* param,
-    const struct pcap_pkthdr* header,
-    const u_char* pkt_data)
-{
-    ip_header* ih;
-    u_short check_sum;
-    u_short offset;
-    u_short id;
-    ether_header* eh = (ether_header*)pkt_data; 
-    u_short ethernet_type;
-
-    ih = (struct ip_header*)(pkt_data + 14);
-    //eh = (ether_header*)(pkt_data);
-    
-    ethernet_type = ntohs(eh->ether_type);
-    printf("++++++++++以太帧解析+++++++++\n");
-    printf("数据包类型为:%x-", ethernet_type);
-    switch (ethernet_type)
-    {
-    case 0x0800:
-
-        printf("IPv4协议\n");
-        break;
-    case 0x0806:
-        printf("ARP请求应答\n");
-        break;
-    case 0x8035:
-        printf("RARP请求应答\n");
-        break;
-    default:
-        break;
-    }
-    printf("源MAC地址为：%02x:%02x:%02x:%02x:%02x:%02x\n", eh->ether_shost[0], eh->ether_shost[1], eh->ether_shost[2], eh->ether_shost[3], eh->ether_shost[4], eh->ether_shost[5]);
-    printf("目标MAC地址为：%02x:%02x:%02x:%02x:%02x:%02x\n", eh->ether_dhost[0], eh->ether_dhost[1], eh->ether_dhost[2], eh->ether_dhost[3], eh->ether_dhost[4], eh->ether_dhost[5]);
-
-    if (ethernet_type != 0x0800)
-    {
-        cout << "非IPv4报文，退出解析\n" << endl;
-        return;
-    }
-    //网络字节序转为主机字节序
-    id = ntohs(ih->identification);
-    check_sum = ntohs(ih->crc);
-    offset = ntohs(ih->flags_fo);
-    printf("++++++++++IP数据报解析+++++++++\n");
-    printf("IP Version :%d\n", ih->ver_ihl >> 4);
-    printf("首部长度：%d\n", (ih->ver_ihl & 0xF)*4);
-    printf("服务类型：%d\n", ih->tos);
-    printf("总长度：%d\n", ih->tlen);
-    printf("标识：0x%x\n",id);
-    printf("标志：0x%x\n", offset >> 13);
-    printf("片偏移：%d\n",offset&0x1fff);
-    printf("生存时间：%d\n",ih->ttl);
-    printf("头部校验和：0x%x\n",check_sum);
-    printf("源IP地址：%d.%d.%d.%d\n",ih->saddr.byte1,ih->saddr.byte2,ih->saddr.byte3,ih->saddr.byte4);
-    printf("目标IP地址：%d.%d.%d.%d\n",ih->daddr.byte1,ih->daddr.byte2,ih->daddr.byte3,ih->daddr.byte4);
-    printf("协议类型：%d-", ih->proto);
-    switch (ih->proto)
-    {
-    case 1:
-        printf("ICMP\n");
-        break;
-    case 2:
-        printf("IGMP\n");
-        break;
-    case 6:
-        printf("TCP\n");
-        break;
-    case 17:
-        printf("UDP\n");
-        break;
-    case 41:
-        printf("IPv6\n");
-        break;
-    default:
-        break;
-    }
-    printf("++++++++++本次解析完成+++++++++\n\n");
-    return;
 }
