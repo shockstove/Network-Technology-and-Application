@@ -161,10 +161,27 @@ int main()
     ARPframe.sender_ip.byte2=d->addresses->addr->sa_data[3];
     ARPframe.sender_ip.byte3=d->addresses->addr->sa_data[4];
     ARPframe.sender_ip.byte4=d->addresses->addr->sa_data[5];
-    ARPframe.target_ip.byte1=192;
-    ARPframe.target_ip.byte2=168;
-    ARPframe.target_ip.byte3=201;
-    ARPframe.target_ip.byte4=180;
+    string ipInput;
+    cout<<"输入IP地址；";
+    cin>>ipInput;
+    u_char addr=0;
+    for(int i=0,j=0;i<ipInput.length();i++)
+    {
+        if(ipInput[i]!='.')
+            addr=addr*10+ipInput[i]-'0';
+        else
+        {
+            switch(j)
+            {
+                case 0:ARPframe.target_ip.byte1=addr;break;
+                case 1:ARPframe.target_ip.byte2=addr;break;
+                case 2:ARPframe.target_ip.byte3=addr;break;
+            }
+            addr=0;
+            j++;
+        }
+    }
+    ARPframe.target_ip.byte4=addr;
     ARPframe.header.ether_type=htons(0x0806);
     ARPframe.hardware=htons(0x0001);
     ARPframe.protocol=htons(0x0800);
