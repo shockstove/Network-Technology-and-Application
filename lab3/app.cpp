@@ -1,7 +1,6 @@
 #define  _CRT_SECURE_NO_WARNINGS 1
 #include<pcap.h>
 #include<Winsock2.h>
-//   
 #include<iostream>
 #include<stdio.h>
 #include<stdlib.h>
