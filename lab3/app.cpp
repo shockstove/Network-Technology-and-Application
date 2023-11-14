@@ -1,7 +1,7 @@
 #define  _CRT_SECURE_NO_WARNINGS 1
 #include<pcap.h>
 #include<Winsock2.h>
-#include <windows.h>
+//   
 #include<iostream>
 #include<stdio.h>
 #include<stdlib.h>
@@ -29,7 +29,7 @@ typedef struct ehter_header {
     u_short   ether_type;       //帧类型
 }ether_header;
 
-/* IPv4 header */
+/* ARP header */
 typedef struct ARP_frame {
     ether_header header;
     u_short hardware;
@@ -72,8 +72,7 @@ int main()
         else
             printf(" 无可用设备！\n");
     }
-    if (i == 0)
-        return -1;
+    if (i == 0)  return -1;
     printf("请输入设备编号 (1-%d):", i);
     scanf("%d", &inum);
     if (inum < 1 || inum > i)
@@ -103,7 +102,7 @@ int main()
         return -1;
     }
     printf("\n正在 %s 上监听...\n", d->description);
-    cout << "正在设置过滤条件..."<<endl;
+    cout << "正在设置过滤条件...限定为ARP......"<<endl;
     char filter[40] = "ether proto \\arp";
     u_int netmask;
     struct bpf_program fcode;
@@ -115,7 +114,7 @@ int main()
         netmask = 0xffffff;
     if (pcap_compile(adhandle, &fcode, filter, 1, netmask) < 0)
     {
-        fprintf(stderr,"\n无法解析过滤器，请检查输入\n");
+        fprintf(stderr,"\n无法解析过滤器\n");
         pcap_freealldevs(alldevs);
         return -1;
     }
@@ -127,10 +126,9 @@ int main()
             return -1;
         }
         cout << "正在监听" << d->description << endl;
-        //pcap_freealldevs(alldevs);
-        //pcap_loop(adhandle, count, packet_handler, NULL);
     }
-    PIP_ADAPTER_ADDRESSES pAddresses=nullptr;
+    //获取网卡设备MAC地址
+    PIP_ADAPTER_ADDRESSES pAddresses=nullptr;   
     IP_ADAPTER_DNS_SERVER_ADDRESS *pDnsServer=nullptr;
     ULONG outbuflen=0;
     GetAdaptersAddresses(AF_UNSPEC,0,NULL,pAddresses,&outbuflen);
@@ -139,6 +137,7 @@ int main()
     while(1)
     {
         bool find = 1;
+        //简化成使用IP地址而不是设备GUID标识找到该设备
         for(int i=2;i<6;i++)
         {
             if(pAddresses->FirstUnicastAddress->Address.lpSockaddr->sa_data[i]!=d->addresses->addr->sa_data[i])
@@ -150,6 +149,7 @@ int main()
         if(find)break;
         pAddresses = pAddresses->Next;
     }
+    //封装ARP包
     for(int i=0;i<6;i++)
     {
         ARPframe.header.ether_shost[i]=pAddresses->PhysicalAddress[i];
@@ -188,7 +188,9 @@ int main()
     ARPframe.hardware_size=6;
     ARPframe.protocol_size=4;
     ARPframe.opcode=htons(0x0001);
+    //发送ARP请求
     pcap_sendpacket(adhandle,(u_char*)&ARPframe,sizeof(ARPframe));
+    //循环捕获ARP应答
     while(1)
     {
         switch(pcap_next_ex(adhandle,&pkt_header,&pkt_data))
@@ -200,7 +202,6 @@ int main()
             cout<<"未捕获到数据报"<<endl;
             break;
         default:
-            //ether_header* ETH=(ether_header*)pkt_data;
             RecFrame=(ARP_frame*)pkt_data;
             if(RecFrame->target_ip.byte1==ARPframe.sender_ip.byte1
             &&RecFrame->target_ip.byte2==ARPframe.sender_ip.byte2
@@ -214,7 +215,8 @@ int main()
                 cout<<"对应关系如下:"<<endl;
                 printf("%d.%d.%d.%d\n",ARPframe.target_ip.byte1,ARPframe.target_ip.byte2,ARPframe.target_ip.byte3,ARPframe.target_ip.byte4);
                 printf("%02x:%02x:%02x:%02x:%02x:%02x\n",RecFrame->sender_mac[0],RecFrame->sender_mac[1],RecFrame->sender_mac[2],RecFrame->sender_mac[3],RecFrame->sender_mac[4],RecFrame->sender_mac[5]);
-                break;
+                system("pause");
+                return 0;
             }
         }
     }
