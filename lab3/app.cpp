@@ -14,12 +14,8 @@
 using namespace std;
 
 /* 4 bytes IP address */
-
 typedef struct ip_address {
-    u_char byte1;
-    u_char byte2;
-    u_char byte3;
-    u_char byte4;
+    u_long ip;
 }ip_address;
 #pragma pack(1)
 typedef struct ehter_header {
@@ -30,16 +26,16 @@ typedef struct ehter_header {
 
 /* ARP header */
 typedef struct ARP_frame {
-    ether_header header;
-    u_short hardware;
-    u_short protocol;
-    u_char hardware_size;
-    u_char protocol_size;
-    u_short opcode;
-    u_char sender_mac[6];
-    ip_address sender_ip;
-    u_char target_mac[6];
-    ip_address target_ip;
+    ether_header header;    //以太帧首部
+    u_short hardware;       //硬件类型
+    u_short protocol;       //协议类型
+    u_char hardware_size;   //硬件地址长度
+    u_char protocol_size;   //协议地址长度
+    u_short opcode;         //操作码
+    u_char sender_mac[6];   //源MAC地址
+    ip_address sender_ip;   //源IP地址
+    u_char target_mac[6];   //目的MAC地址
+    ip_address target_ip;   //目的IP地址
 }ARP_frame;
 #pragma pack(0)
 
@@ -128,24 +124,16 @@ int main()
     }
     //获取网卡设备MAC地址
     PIP_ADAPTER_ADDRESSES pAddresses=nullptr;   
-    IP_ADAPTER_DNS_SERVER_ADDRESS *pDnsServer=nullptr;
+    //IP_ADAPTER_DNS_SERVER_ADDRESS *pDnsServer=nullptr;
     ULONG outbuflen=0;
     GetAdaptersAddresses(AF_UNSPEC,0,NULL,pAddresses,&outbuflen);
     pAddresses=(IP_ADAPTER_ADDRESSES*)malloc(outbuflen);
     GetAdaptersAddresses(AF_INET,NULL,NULL,pAddresses,&outbuflen);
     while(1)
     {
-        bool find = 1;
         //简化成使用IP地址而不是设备GUID标识找到该设备
-        for(int i=2;i<6;i++)
-        {
-            if(pAddresses->FirstUnicastAddress->Address.lpSockaddr->sa_data[i]!=d->addresses->addr->sa_data[i])
-            {
-                find = 0;
-                break;
-            }
-        }
-        if(find)break;
+        if(strncmp((pAddresses->FirstUnicastAddress->Address.lpSockaddr->sa_data+2),(d->addresses->addr->sa_data+2),4)==0)
+        break;
         pAddresses = pAddresses->Next;
     }
     //封装ARP包
@@ -156,31 +144,34 @@ int main()
         ARPframe.sender_mac[i]=pAddresses->PhysicalAddress[i];
         ARPframe.target_mac[i]=0x00;
     }
-    ARPframe.sender_ip.byte1=d->addresses->addr->sa_data[2];
-    ARPframe.sender_ip.byte2=d->addresses->addr->sa_data[3];
-    ARPframe.sender_ip.byte3=d->addresses->addr->sa_data[4];
-    ARPframe.sender_ip.byte4=d->addresses->addr->sa_data[5];
-    string ipInput;
+    // ARPframe.sender_ip.byte1=d->addresses->addr->sa_data[2];
+    // ARPframe.sender_ip.byte2=d->addresses->addr->sa_data[3];
+    // ARPframe.sender_ip.byte3=d->addresses->addr->sa_data[4];
+    // ARPframe.sender_ip.byte4=d->addresses->addr->sa_data[5];
+    strncpy((char*)&ARPframe.sender_ip.ip,(char*)(d->addresses->addr->sa_data+2),4);
+    char ipInput[20];
     cout<<"输入IP地址；";
     cin>>ipInput;
     u_char addr=0;
-    for(int i=0,j=0;i<ipInput.length();i++)
-    {
-        if(ipInput[i]!='.')
-            addr=addr*10+ipInput[i]-'0';
-        else
-        {
-            switch(j)
-            {
-                case 0:ARPframe.target_ip.byte1=addr;break;
-                case 1:ARPframe.target_ip.byte2=addr;break;
-                case 2:ARPframe.target_ip.byte3=addr;break;
-            }
-            addr=0;
-            j++;
-        }
-    }
-    ARPframe.target_ip.byte4=addr;
+    // for(int i=0,j=0;i<ipInput.length();i++)
+    // {
+    //     if(ipInput[i]!='.')
+    //         addr=addr*10+ipInput[i]-'0';
+    //     else
+    //     {
+    //         switch(j)
+    //         {
+    //             case 0:ARPframe.target_ip.byte1=addr;break;
+    //             case 1:ARPframe.target_ip.byte2=addr;break;
+    //             case 2:ARPframe.target_ip.byte3=addr;break;
+    //         }
+    //         addr=0;
+    //         j++;
+    //     }
+    // }
+    //ARPframe.target_ip.byte4=addr;
+    char *ipad = ipInput;
+    ARPframe.target_ip.ip=inet_addr(ipad);
     ARPframe.header.ether_type=htons(0x0806);
     ARPframe.hardware=htons(0x0001);
     ARPframe.protocol=htons(0x0800);
@@ -202,17 +193,20 @@ int main()
             break;
         default:
             RecFrame=(ARP_frame*)pkt_data;
-            if(RecFrame->target_ip.byte1==ARPframe.sender_ip.byte1
-            &&RecFrame->target_ip.byte2==ARPframe.sender_ip.byte2
-            &&RecFrame->target_ip.byte3==ARPframe.sender_ip.byte3
-            &&RecFrame->target_ip.byte4==ARPframe.sender_ip.byte4
-            &&RecFrame->sender_ip.byte1==ARPframe.target_ip.byte1
-            &&RecFrame->sender_ip.byte2==ARPframe.target_ip.byte2
-            &&RecFrame->sender_ip.byte3==ARPframe.target_ip.byte3
-            &&RecFrame->sender_ip.byte4==ARPframe.target_ip.byte4)
+            if(
+            //     RecFrame->target_ip.byte1==ARPframe.sender_ip.byte1
+            // &&RecFrame->target_ip.byte2==ARPframe.sender_ip.byte2
+            // &&RecFrame->target_ip.byte3==ARPframe.sender_ip.byte3
+            // &&RecFrame->target_ip.byte4==ARPframe.sender_ip.byte4
+            // &&RecFrame->sender_ip.byte1==ARPframe.target_ip.byte1
+            // &&RecFrame->sender_ip.byte2==ARPframe.target_ip.byte2
+            // &&RecFrame->sender_ip.byte3==ARPframe.target_ip.byte3
+            // &&RecFrame->sender_ip.byte4==ARPframe.target_ip.byte4
+            (RecFrame->target_ip.ip==ARPframe.sender_ip.ip)&&(RecFrame->sender_ip.ip==ARPframe.target_ip.ip)
+            )
             {
                 cout<<"对应关系如下:"<<endl;
-                printf("%d.%d.%d.%d\n",ARPframe.target_ip.byte1,ARPframe.target_ip.byte2,ARPframe.target_ip.byte3,ARPframe.target_ip.byte4);
+                printf("%d.%d.%d.%d\n",(u_char)ARPframe.target_ip.ip,(ARPframe.target_ip.ip & 0x0000FF00) >> 8,(ARPframe.target_ip.ip & 0x00FF0000) >> 16,(ARPframe.target_ip.ip & 0xFF000000)>>24);
                 printf("%02x:%02x:%02x:%02x:%02x:%02x\n",RecFrame->sender_mac[0],RecFrame->sender_mac[1],RecFrame->sender_mac[2],RecFrame->sender_mac[3],RecFrame->sender_mac[4],RecFrame->sender_mac[5]);
                 system("pause");
                 return 0;
